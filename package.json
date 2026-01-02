@@ -1,9 +1,12 @@
 {
   "name": "@yamo/mcp-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "YAMO Protocol v0.4 - Model Context Protocol server for AI agents",
   "main": "dist/index.js",
   "type": "commonjs",
+  "bin": {
+    "yamo-mcp-server": "./dist/index.js"
+  },
   "files": [
     "dist/",
     "README.md",
