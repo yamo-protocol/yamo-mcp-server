@@ -46,14 +46,26 @@ _Note: The package is not yet published to npm. Please use the GitHub installati
 
 ### Environment Variables
 
-Create a `.env` file:
+**Required:** Create a `.env` file before running the server:
 
-```env
-RPC_URL=http://127.0.0.1:8545
-PRIVATE_KEY=your_private_key
-CONTRACT_ADDRESS=0x...
-PINATA_JWT=your_pinata_jwt
+```bash
+cd yamo-mcp-server
+cp .env.example .env
+# Edit .env with your configuration
 ```
+
+Or create it manually:
+
+```bash
+cat > .env << 'EOF'
+RPC_URL=http://127.0.0.1:8545
+PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
+PINATA_JWT=
+EOF
+```
+
+**Note:** The private key shown above is from Hardhat's test accounts (safe for local development only). Never use it on mainnet or testnets with real funds.
 
 ### Claude Desktop Integration
 
