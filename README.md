@@ -69,24 +69,29 @@ EOF
 
 ### Claude Desktop Integration
 
-Add to your `claude_desktop_config.json`:
+The MCP server reads all configuration from the `.env` file. Simply point Claude Desktop to the server:
+
+**Add to `claude_desktop_config.json`:**
 
 ```json
 {
   "mcpServers": {
     "yamo": {
       "command": "node",
-      "args": ["/path/to/yamo-mcp-server/dist/index.js"],
-      "env": {
-        "RPC_URL": "http://127.0.0.1:8545",
-        "PRIVATE_KEY": "your_key",
-        "CONTRACT_ADDRESS": "0x...",
-        "PINATA_JWT": "your_jwt"
-      }
+      "args": ["/absolute/path/to/yamo-mcp-server/dist/index.js"]
     }
   }
 }
 ```
+
+**Important:**
+- ✅ Use **absolute path** to dist/index.js
+- ✅ Configuration comes from `.env` file (no need to duplicate here)
+- ✅ Keep secrets in `.env` (gitignored), not in config.json
+
+**Example paths:**
+- macOS/Linux: `"/Users/yourname/yamo-mcp-server/dist/index.js"`
+- Windows: `"C:\\Users\\yourname\\yamo-mcp-server\\dist\\index.js"`
 
 ## MCP Tools
 
