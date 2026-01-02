@@ -15,15 +15,32 @@ The YAMO MCP server enables AI agents (like Claude) to submit YAMO blocks to the
 
 ## Installation
 
+### From GitHub (Current Method)
+
 ```bash
-npm install -g @yamo/mcp-server
+# Clone the repository
+git clone https://github.com/yamo-protocol/yamo-mcp-server.git
+cd yamo-mcp-server
+
+# Install dependencies (automatically builds @yamo/core)
+npm install
+
+# Build the server
+npm run build
+
+# Run the server
+npm start
 ```
 
-Or install locally:
+### From NPM (Coming Soon)
+
+Once published to npm, you'll be able to install with:
 
 ```bash
 npm install @yamo/mcp-server
 ```
+
+_Note: The package is not yet published to npm. Please use the GitHub installation method above._
 
 ## Configuration
 
