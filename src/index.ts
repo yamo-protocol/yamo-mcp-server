@@ -51,7 +51,7 @@ class YamoMcpServer {
   private chain: YamoChainClient;
 
   constructor() {
-    this.server = new Server({ name: "yamo-chain-mcp", version: "0.5.0" }, { capabilities: { tools: {} } });
+    this.server = new Server({ name: "yamo", version: "1.0.0" }, { capabilities: { tools: {} } });
     this.ipfs = new IpfsManager();
     this.chain = new YamoChainClient();
     this.setupHandlers();
