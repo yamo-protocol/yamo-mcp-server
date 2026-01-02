@@ -7,6 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { IpfsManager, YamoChainClient } from "@yamo/core";
 import * as dotenv from "dotenv";
+import fs from "fs";
 
 dotenv.config();
 
@@ -22,10 +23,11 @@ const SUBMIT_BLOCK_TOOL: Tool = {
       consensusType: { type: "string" },
       ledger: { type: "string" },
       content: { type: "string", description: "Optional: Full YAMO text content for IPFS anchoring." },
-      files: { 
-        type: "array", 
+      encryptionKey: { type: "string", description: "Optional: Key to encrypt the IPFS bundle." },
+      files: {
+        type: "array",
         items: { type: "object", properties: { name: { type: "string"}, content: { type: "string" } } },
-        description: "Optional: Array of output files to bundle."
+        description: "Optional: Array of output files to bundle. Each file's 'content' can be either the actual file content (string) or a file path (will be auto-read)."
       }
     },
     required: ["blockId", "previousBlock", "contentHash", "consensusType", "ledger"],
@@ -67,13 +69,31 @@ class YamoMcpServer {
 
       try {
         if (name === "yamo_submit_block") {
-          const { blockId, previousBlock, contentHash, consensusType, ledger, content, files } = args as any;
-          
+          const { blockId, previousBlock, contentHash, consensusType, ledger, content, files, encryptionKey } = args as any;
+
+          // Process files - auto-read if they're file paths
+          let processedFiles = files;
+          if (files && Array.isArray(files)) {
+            processedFiles = files.map((file: any) => {
+              // Check if content is a file path that exists
+              if (typeof file.content === 'string' && fs.existsSync(file.content)) {
+                console.error(`Auto-reading file from path: ${file.content}`);
+                return {
+                  name: file.name,
+                  content: fs.readFileSync(file.content, 'utf8')
+                };
+              }
+              // Otherwise use content as-is
+              return file;
+            });
+          }
+
           let ipfsCID = undefined;
           if (content) {
-             ipfsCID = await this.ipfs.upload({ 
-               content, 
-               files: files // Agents can now bundle outputs too!
+             ipfsCID = await this.ipfs.upload({
+               content,
+               files: processedFiles,
+               encryptionKey
              });
           }
 
@@ -108,7 +128,7 @@ class YamoMcpServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("YAMO Chain MCP Server (v0.5) running on stdio");
+    console.error("YAMO MCP Server v1.0.0 running on stdio");
   }
 }
 

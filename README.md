@@ -1,164 +1,36 @@
-# @yamo/mcp-server
+# 🤖 YAMO Chain MCP Server (v1.0.0 - Protocol v0.4)
 
-Model Context Protocol (MCP) server for YAMO Protocol integration with AI agents.
+This MCP Server acts as a bridge, allowing LLMs to interact with the YAMO Blockchain. It is now powered by `@yamo/core` for robust IPFS handling.
 
-## Overview
+## 🧰 Tools Provided
 
-The YAMO MCP server enables AI agents (like Claude) to submit YAMO blocks to the blockchain via the Model Context Protocol. It provides a bridge between AI reasoning and immutable on-chain storage.
+### `yamo_submit_block`
+Submits a new reasoning block.
+*   **Input**: `blockId`, `contentHash`, etc.
+*   **New Feature**: `content` (string) and `files` (array). If provided, the server handles IPFS uploading and Deep Bundling automatically before signing.
+*   **Encryption**: Optional `encryptionKey` (string). If provided, the bundle is encrypted (AES-256-GCM) before upload, ensuring privacy for sensitive reasoning chains.
 
-## Features
+### `yamo_verify_block`
+Verifies if a specific hash matches the immutable record.
 
-- **MCP Tools**: `yamo_submit_block` and `yamo_verify_block`
-- **IPFS Integration**: Automatic upload to IPFS with deep bundling
-- **Blockchain Submission**: Direct interaction with YAMORegistry contracts
-- **Environment Configuration**: Flexible setup for local and testnet deployments
+## ⚙️ Configuration
 
-## Installation
-
-### From GitHub (Current Method)
-
-```bash
-# Clone the repository
-git clone https://github.com/yamo-protocol/yamo-mcp-server.git
-cd yamo-mcp-server
-
-# Install dependencies (automatically builds @yamo/core)
-npm install
-
-# Build the server
-npm run build
-
-# Run the server
-npm start
-```
-
-### From NPM (Coming Soon)
-
-Once published to npm, you'll be able to install with:
-
-```bash
-npm install @yamo/mcp-server
-```
-
-_Note: The package is not yet published to npm. Please use the GitHub installation method above._
-
-## Configuration
-
-### Environment Variables
-
-**Required:** Create a `.env` file before running the server:
-
-```bash
-cd yamo-mcp-server
-cp .env.example .env
-# Edit .env with your configuration
-```
-
-Or create it manually:
-
-```bash
-cat > .env << 'EOF'
-RPC_URL=http://127.0.0.1:8545
-PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
-PINATA_JWT=
-EOF
-```
-
-**Note:** The private key shown above is from Hardhat's test accounts (safe for local development only). Never use it on mainnet or testnets with real funds.
-
-### Claude Desktop Integration
-
-The MCP server reads all configuration from the `.env` file. Simply point Claude Desktop to the server:
-
-**Add to `claude_desktop_config.json`:**
+Add to your Claude Desktop config (`claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
-    "yamo": {
+    "yamo-chain": {
       "command": "node",
-      "args": ["/absolute/path/to/yamo-mcp-server/dist/index.js"]
+      "args": ["/absolute/path/to/yamo/packages/mcp-server/dist/index.js"],
+      "env": {
+        "CONTRACT_ADDRESS": "0xe7f1...",
+        "RPC_URL": "http://127.0.0.1:8545",
+        "PRIVATE_KEY": "0x...",
+        "USE_REAL_IPFS": "true",
+        "PINATA_JWT": "eyJ..."
+      }
     }
   }
 }
 ```
-
-**Important:**
-- ✅ Use **absolute path** to dist/index.js
-- ✅ Configuration comes from `.env` file (no need to duplicate here)
-- ✅ Keep secrets in `.env` (gitignored), not in config.json
-
-**Example paths:**
-- macOS/Linux: `"/Users/yourname/yamo-mcp-server/dist/index.js"`
-- Windows: `"C:\\Users\\yourname\\yamo-mcp-server\\dist\\index.js"`
-
-## MCP Tools
-
-### `yamo_submit_block`
-
-Submit a YAMO block to the blockchain.
-
-**Parameters:**
-- `blockId` (required): Unique block identifier
-- `previousBlock` (required): Previous block ID (use "genesis" for first block)
-- `contentHash` (required): SHA256 hash of content
-- `consensusType` (required): Consensus mechanism (e.g., "single_agent")
-- `ledger` (required): Ledger name (e.g., "main")
-- `content` (optional): Full YAMO content for IPFS upload
-- `files` (optional): Array of output files to bundle with the block
-
-**Example:**
-
-```typescript
-{
-  "blockId": "block_001",
-  "previousBlock": "genesis",
-  "contentHash": "0xabc123...",
-  "consensusType": "single_agent",
-  "ledger": "main",
-  "content": "agent: MyAgent;\nintent: test;",
-  "files": [
-    {
-      "name": "output.json",
-      "content": "{\"result\": \"success\"}"
-    }
-  ]
-}
-```
-
-### `yamo_verify_block`
-
-Verify a block's integrity.
-
-**Parameters:**
-- `blockId` (required): Block ID to verify
-- `contentHash` (required): Expected content hash
-
-## Development
-
-```bash
-# Install dependencies
-npm install
-
-# Build
-npm run build
-
-# Run server
-npm start
-
-# Development mode
-npm run dev
-```
-
-## Testing
-
-Run the E2E test suite:
-
-```bash
-node e2e/mcp_super.test.js
-```
-
-## License
-
-MIT
