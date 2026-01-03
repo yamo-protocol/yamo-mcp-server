@@ -83,10 +83,86 @@ npx @yamo/mcp-server
 
 ## 🌐 Networks
 
-**Sepolia Testnet (default):**
-- Contract: `0x3c9440fa8d604E732233ea17095e14be1a53b015`
-- RPC: `https://rpc.sepolia.org` (free public RPC)
+### Sepolia Testnet (Production - Recommended)
 
-**Local Development:**
+**Configuration:**
+- Contract: `0x3c9440fa8d604E732233ea17095e14be1a53b015`
+- RPC: `https://rpc.sepolia.org` or `https://ethereum-sepolia-rpc.publicnode.com`
+
+**Requirements:**
+- ✅ Wallet with Sepolia ETH for gas
+- ✅ Public RPC endpoint (no API key needed)
+
+### Local Development
+
+**Configuration:**
 - Contract: Deploy using `@yamo/contracts`
 - RPC: `http://127.0.0.1:8545`
+
+**Requirements:**
+- ⚠️ Local Hardhat node must be running: `npx hardhat node`
+- ⚠️ Contract must be deployed locally
+- ⚠️ Wallet must be funded with local ETH
+
+## 💰 Wallet Setup
+
+### 1. Generate a Wallet
+
+If you don't have a private key:
+```bash
+node -e "const ethers = require('ethers'); const w = ethers.Wallet.createRandom(); console.log('Address:', w.address); console.log('Private Key:', w.privateKey);"
+```
+
+### 2. Get Sepolia ETH (Testnet Only)
+
+Your wallet needs Sepolia ETH for gas. Use your **wallet address** (not private key) with these faucets:
+
+**Alchemy Faucet** (Fastest - 0.5 ETH):
+- https://www.alchemy.com/faucets/ethereum-sepolia
+- Sign in with Google/GitHub
+
+**PoW Faucet** (No login - 0.05-0.1 ETH):
+- https://sepolia-faucet.pk910.de/
+- Mine for ~5 minutes
+
+**Google Cloud Faucet** (0.05 ETH):
+- https://cloud.google.com/application/web3/faucet/ethereum/sepolia
+
+### 3. Check Your Balance
+
+```bash
+# Replace with your wallet address
+curl -X POST https://ethereum-sepolia-rpc.publicnode.com \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_getBalance","params":["0xYOUR_ADDRESS","latest"],"id":1}'
+```
+
+If result is `"0x0"`, you need more ETH!
+
+## ⚠️ Common Issues
+
+### "Sender doesn't have enough funds"
+
+**Problem:** Your wallet has 0 ETH or insufficient balance
+
+**Solution:**
+1. Check you're using **Sepolia RPC**, not localhost
+2. Verify your wallet address has Sepolia ETH (see faucets above)
+3. Make sure `PRIVATE_KEY` matches the funded wallet
+
+### "Connection refused" or "ECONNREFUSED"
+
+**Problem:** RPC_URL points to `http://127.0.0.1:8545` but no local node running
+
+**Solution:**
+- **For Sepolia:** Change RPC to `https://rpc.sepolia.org`
+- **For Local:** Start Hardhat node: `cd packages/contracts && npx hardhat node`
+
+### Balance shows 0 but I have ETH
+
+**Problem:** Wrong network - you might have mainnet ETH, not Sepolia ETH
+
+**Solution:**
+1. Verify RPC is Sepolia: `https://rpc.sepolia.org`
+2. Check balance on Sepolia: https://sepolia.etherscan.io/
+3. Get Sepolia testnet ETH from faucets (see above)
