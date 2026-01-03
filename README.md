@@ -1,4 +1,4 @@
-# 🤖 YAMO Chain MCP Server (v1.0.1 - Protocol v0.4)
+# 🤖 YAMO Chain MCP Server [![npm version](https://badge.fury.io/js/@yamo%2Fmcp-server.svg)](https://www.npmjs.com/package/@yamo/mcp-server)
 
 This MCP Server acts as a bridge, allowing LLMs to interact with the YAMO Blockchain. It is now powered by `@yamo/core` for robust IPFS handling.
 
@@ -37,7 +37,7 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
       "command": "yamo-mcp-server",
       "env": {
         "CONTRACT_ADDRESS": "0x3c9440fa8d604E732233ea17095e14be1a53b015",
-        "RPC_URL": "https://rpc.sepolia.org",
+        "RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com",
         "PRIVATE_KEY": "0xYOUR_PRIVATE_KEY",
         "USE_REAL_IPFS": "false",
         "PINATA_JWT": "optional_if_using_real_ipfs"
@@ -56,7 +56,7 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
       "args": ["@yamo/mcp-server"],
       "env": {
         "CONTRACT_ADDRESS": "0x3c9440fa8d604E732233ea17095e14be1a53b015",
-        "RPC_URL": "https://rpc.sepolia.org",
+        "RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com",
         "PRIVATE_KEY": "0xYOUR_PRIVATE_KEY",
         "USE_REAL_IPFS": "false"
       }
@@ -71,7 +71,7 @@ Set environment variables and run:
 
 ```bash
 export CONTRACT_ADDRESS=0x3c9440fa8d604E732233ea17095e14be1a53b015
-export RPC_URL=https://rpc.sepolia.org
+export RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
 export PRIVATE_KEY=0xYOUR_PRIVATE_KEY
 
 # With global install
@@ -87,7 +87,7 @@ npx @yamo/mcp-server
 
 **Configuration:**
 - Contract: `0x3c9440fa8d604E732233ea17095e14be1a53b015`
-- RPC: `https://rpc.sepolia.org` or `https://ethereum-sepolia-rpc.publicnode.com`
+- RPC: `https://ethereum-sepolia-rpc.publicnode.com`
 
 **Requirements:**
 - ✅ Wallet with Sepolia ETH for gas
@@ -155,7 +155,7 @@ If result is `"0x0"`, you need more ETH!
 **Problem:** RPC_URL points to `http://127.0.0.1:8545` but no local node running
 
 **Solution:**
-- **For Sepolia:** Change RPC to `https://rpc.sepolia.org`
+- **For Sepolia:** Change RPC to `https://ethereum-sepolia-rpc.publicnode.com`
 - **For Local:** Start Hardhat node: `cd packages/contracts && npx hardhat node`
 
 ### Balance shows 0 but I have ETH
@@ -163,6 +163,6 @@ If result is `"0x0"`, you need more ETH!
 **Problem:** Wrong network - you might have mainnet ETH, not Sepolia ETH
 
 **Solution:**
-1. Verify RPC is Sepolia: `https://rpc.sepolia.org`
+1. Verify RPC is Sepolia: `https://ethereum-sepolia-rpc.publicnode.com`
 2. Check balance on Sepolia: https://sepolia.etherscan.io/
 3. Get Sepolia testnet ETH from faucets (see above)
