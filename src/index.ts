@@ -10,6 +10,9 @@ import { IpfsManager, YamoChainClient } from "@yamo/core";
 import * as dotenv from "dotenv";
 import fs from "fs";
 import crypto from "crypto";
+import path from "path";
+
+const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
 
 dotenv.config();
 
@@ -184,7 +187,7 @@ class YamoMcpServer {
   private chain: YamoChainClient;
 
   constructor() {
-    this.server = new Server({ name: "yamo", version: "1.0.0" }, { capabilities: { tools: {} } });
+    this.server = new Server({ name: "yamo", version: pkg.version }, { capabilities: { tools: {} } });
     this.ipfs = new IpfsManager();
     this.chain = new YamoChainClient();
     this.setupHandlers();
@@ -390,7 +393,7 @@ class YamoMcpServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("YAMO MCP Server v1.0.0 running on stdio");
+    console.error(`YAMO MCP Server v${pkg.version} running on stdio`);
   }
 }
 
