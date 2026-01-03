@@ -1,4 +1,4 @@
-# 🤖 YAMO Chain MCP Server [![npm version](https://badge.fury.io/js/@yamo%2Fmcp-server.svg)](https://www.npmjs.com/package/@yamo/mcp-server)
+# 🤖 YAMO Chain MCP Server [![npm version](https://img.shields.io/npm/v/@yamo/mcp-server)](https://www.npmjs.com/package/@yamo/mcp-server)
 
 This MCP Server acts as a bridge, allowing LLMs to interact with the YAMO Blockchain. It is now powered by `@yamo/core` for robust IPFS handling.
 
