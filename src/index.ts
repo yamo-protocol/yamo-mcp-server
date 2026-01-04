@@ -16,6 +16,17 @@ const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 
 
 dotenv.config();
 
+// Validation helper for bytes32 hashes (Part 3: Security Fixes)
+function validateBytes32(value: string, fieldName: string): void {
+  if (!value.match(/^0x[a-fA-F0-9]{64}$/)) {
+    throw new Error(
+      `${fieldName} must be a valid bytes32 hash (0x + 64 hex chars). ` +
+      `Received: ${value.substring(0, 20)}...` +
+      `\nDo NOT include algorithm prefixes like "sha256:"`
+    );
+  }
+}
+
 const SUBMIT_BLOCK_TOOL: Tool = {
   name: "yamo_submit_block",
   description: `Submits a YAMO block to the YAMORegistry smart contract.
@@ -205,22 +216,32 @@ class YamoMcpServer {
         if (name === "yamo_submit_block") {
           const { blockId, previousBlock, contentHash, consensusType, ledger, content, files, encryptionKey } = args as any;
 
-          // Process files - auto-read if they're file paths
+          // Process files - auto-read if they're file paths (with security fix)
           let processedFiles = files;
           if (files && Array.isArray(files)) {
             processedFiles = files.map((file: any) => {
               // Check if content is a file path that exists
               if (typeof file.content === 'string' && fs.existsSync(file.content)) {
+                // Security: Resolve to absolute path and restrict to cwd (Part 3: Security Fixes)
+                const filePath = path.resolve(file.content);
+                const allowedDir = process.cwd();
+                if (!filePath.startsWith(allowedDir)) {
+                  throw new Error(`File path outside allowed directory: ${file.content}`);
+                }
                 console.error(`[DEBUG] Auto-reading file from path: ${file.content}`);
                 return {
                   name: file.name,
-                  content: fs.readFileSync(file.content, 'utf8')
+                  content: fs.readFileSync(filePath, 'utf8')
                 };
               }
               // Otherwise use content as-is
               return file;
             });
           }
+
+          // Input validation (Part 3: Security Fixes)
+          validateBytes32(contentHash, "contentHash");
+          validateBytes32(previousBlock, "previousBlock");
 
           let ipfsCID = undefined;
           if (content) {
@@ -231,14 +252,20 @@ class YamoMcpServer {
              });
           }
 
-          const txHash = await this.chain.submitBlock(blockId, previousBlock, contentHash, consensusType, ledger, ipfsCID);
+          const tx = await this.chain.submitBlock(blockId, previousBlock, contentHash, consensusType, ledger, ipfsCID);
+          const receipt = await tx.wait();
 
           return {
             content: [{ type: "text", text: JSON.stringify({
               success: true,
               blockId,
-              transactionHash: txHash,
-              ipfsCID: ipfsCID || null
+              transactionHash: tx.hash,
+              blockNumber: receipt.blockNumber,
+              gasUsed: receipt.gasUsed.toString(),
+              effectiveGasPrice: receipt.effectiveGasPrice?.toString(),
+              ipfsCID: ipfsCID || null,
+              contractAddress: this.chain.getContractAddress(),
+              timestamp: new Date().toISOString()
             }, null, 2) }],
           };
         }

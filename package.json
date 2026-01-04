@@ -17,7 +17,9 @@
     "build": "tsc",
     "prepublishOnly": "npm run build",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "test": "node --test test/**/*.test.js",
+    "test:security": "node --test test/security.test.js"
   },
   "keywords": [
     "yamo",
