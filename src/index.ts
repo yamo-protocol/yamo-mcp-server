@@ -16,7 +16,55 @@ const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 
 
 dotenv.config();
 
-// Validation helper for bytes32 hashes (Part 3: Security Fixes)
+// TypeScript interfaces for tool arguments and responses
+interface FileInput {
+  name: string;
+  content: string;
+}
+
+interface SubmitBlockArgs {
+  blockId: string;
+  previousBlock?: string;
+  contentHash: string;
+  consensusType: string;
+  ledger: string;
+  content?: string;
+  files?: FileInput[];
+  encryptionKey?: string;
+}
+
+interface GetBlockArgs {
+  blockId: string;
+}
+
+interface AuditBlockArgs {
+  blockId: string;
+  encryptionKey?: string;
+}
+
+interface VerifyBlockArgs {
+  blockId: string;
+  contentHash: string;
+}
+
+interface ToolResponse {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}
+
+interface BlockData {
+  blockId: string;
+  previousBlock: string;
+  agentAddress: string;
+  contentHash: string;
+  timestamp: number;
+  timestampISO: string;
+  consensusType: string;
+  ledger: string;
+  ipfsCID: string | null;
+}
+
+// Validation helpers
 function validateBytes32(value: string, fieldName: string): void {
   if (!value.match(/^0x[a-fA-F0-9]{64}$/)) {
     throw new Error(
@@ -25,6 +73,24 @@ function validateBytes32(value: string, fieldName: string): void {
       `\nDo NOT include algorithm prefixes like "sha256:"`
     );
   }
+}
+
+function validateEthereumAddress(address: string, fieldName: string): void {
+  if (!address || !address.match(/^0x[a-fA-F0-9]{40}$/)) {
+    throw new Error(`${fieldName} must be a valid Ethereum address (0x + 40 hex characters)`);
+  }
+}
+
+function validateEnvironment(): void {
+  const requiredEnvVars = ['CONTRACT_ADDRESS', 'RPC_URL', 'PRIVATE_KEY'];
+  const missing = requiredEnvVars.filter(v => !process.env[v]);
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+
+  // Validate contract address format
+  const contractAddress = process.env.CONTRACT_ADDRESS!;
+  validateEthereumAddress(contractAddress, 'CONTRACT_ADDRESS');
 }
 
 const SUBMIT_BLOCK_TOOL: Tool = {
@@ -231,6 +297,9 @@ class YamoMcpServer {
   private latestContentHash: string | null = null;
 
   constructor() {
+    // Validate environment variables at startup
+    validateEnvironment();
+
     this.server = new Server({ name: "yamo", version: pkg.version }, { capabilities: { tools: {} } });
     this.ipfs = new IpfsManager();
     this.chain = new YamoChainClient();
@@ -247,29 +316,36 @@ class YamoMcpServer {
 
       try {
         if (name === "yamo_submit_block") {
-          const { blockId, previousBlock, contentHash, consensusType, ledger, content, files, encryptionKey } = args as any;
+          const { blockId, previousBlock, contentHash, consensusType, ledger, content, files, encryptionKey } = args as unknown as SubmitBlockArgs;
 
           // Process files - auto-read if they're file paths (with security fix)
           let processedFiles = files;
           if (files && Array.isArray(files)) {
-            processedFiles = files.map((file: any) => {
+            processedFiles = await Promise.all(files.map(async (file: FileInput) => {
               // Check if content is a file path that exists
               if (typeof file.content === 'string' && fs.existsSync(file.content)) {
-                // Security: Resolve to absolute path and restrict to cwd (Part 3: Security Fixes)
-                const filePath = path.resolve(file.content);
-                const allowedDir = process.cwd();
+                // Security: Resolve symlinks and restrict to cwd (prevents symlink attacks and TOCTOU)
+                const filePath = fs.realpathSync(file.content);
+                const allowedDir = fs.realpathSync(process.cwd());
+
+                // Check for symlinks
+                const stats = fs.lstatSync(file.content);
+                if (stats.isSymbolicLink()) {
+                  throw new Error(`Symbolic links are not allowed: ${file.content}`);
+                }
+
                 if (!filePath.startsWith(allowedDir)) {
                   throw new Error(`File path outside allowed directory: ${file.content}`);
                 }
                 console.error(`[DEBUG] Auto-reading file from path: ${file.content}`);
                 return {
                   name: file.name,
-                  content: fs.readFileSync(filePath, 'utf8')
+                  content: await fs.promises.readFile(filePath, 'utf8')
                 };
               }
               // Otherwise use content as-is
               return file;
-            });
+            }));
           }
 
           // Input validation (Part 3: Security Fixes)
@@ -297,7 +373,7 @@ class YamoMcpServer {
                 console.error(`[INFO] No existing blocks found, using genesis`);
               }
             }
-          } else {
+          } else if (previousBlock) {
             validateBytes32(previousBlock, "previousBlock");
           }
 
@@ -334,7 +410,7 @@ class YamoMcpServer {
         }
 
         if (name === "yamo_get_block") {
-          const { blockId } = args as any;
+          const { blockId } = args as unknown as GetBlockArgs;
 
           const block = await this.chain.getBlock(blockId);
 
@@ -346,7 +422,7 @@ class YamoMcpServer {
                 blockId,
                 hint: "Verify the blockId or check if the block was submitted"
               }, null, 2) }],
-              isError: false,
+              isError: true,
             };
           }
 
@@ -378,7 +454,7 @@ class YamoMcpServer {
                 error: "No blocks found on-chain",
                 hint: "The chain may be empty. Try submitting a genesis block first."
               }, null, 2) }],
-              isError: false,
+              isError: true,
             };
           }
 
@@ -401,7 +477,7 @@ class YamoMcpServer {
         }
 
         if (name === "yamo_audit_block") {
-          const { blockId, encryptionKey } = args as any;
+          const { blockId, encryptionKey } = args as unknown as AuditBlockArgs;
 
           // Get block from chain
           const block = await this.chain.getBlock(blockId);
@@ -413,7 +489,7 @@ class YamoMcpServer {
                 blockId,
                 hint: "Cannot audit non-existent block"
               }, null, 2) }],
-              isError: false,
+              isError: true,
             };
           }
 
@@ -487,7 +563,7 @@ class YamoMcpServer {
         }
 
         if (name === "yamo_verify_block") {
-          const { blockId, contentHash } = args as any;
+          const { blockId, contentHash } = args as unknown as VerifyBlockArgs;
           const contract = this.chain.getContract(false);
           const hashBytes = contentHash.startsWith("0x") ? contentHash : `0x${contentHash}`;
           const isValid = await contract.verifyBlock(blockId, hashBytes);
