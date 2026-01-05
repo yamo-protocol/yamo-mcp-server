@@ -38,12 +38,15 @@ const SUBMIT_BLOCK_TOOL: Tool = {
 - contentHash: Must be a valid bytes32 hash (32 bytes = 64 hex characters)
   • Format: "0x" followed by exactly 64 hexadecimal characters
   • Do NOT include algorithm prefixes (e.g., "sha256:")
-- previousBlock: For genesis block use: 0x0000000000000000000000000000000000000000000000000000000000000000
+- previousBlock: Content hash of parent block.
+  • If omitted, automatically fetches the latest block's contentHash
+  • For genesis block: 0x0000000000000000000000000000000000000000000000000000000000000000
 
 **Transaction Flow:**
-1. Content and files are uploaded to IPFS (if provided)
-2. Block is submitted to smart contract with hash reference
-3. Returns transaction hash and IPFS CID`,
+1. If previousBlock omitted, fetches latest block from chain automatically
+2. Content and files are uploaded to IPFS (if provided)
+3. Block is submitted to smart contract with hash reference
+4. Returns transaction hash and IPFS CID`,
   inputSchema: {
     type: "object",
     properties: {
@@ -54,7 +57,7 @@ const SUBMIT_BLOCK_TOOL: Tool = {
       previousBlock: {
         type: "string",
         pattern: "^0x[a-fA-F0-9]{64}$",
-        description: "Content hash of parent block. Genesis: 0x0000...0000"
+        description: "Content hash of parent block. If omitted, auto-fetched from latest block. Use 0x0000...0000 for genesis."
       },
       contentHash: {
         type: "string",
@@ -91,7 +94,7 @@ const SUBMIT_BLOCK_TOOL: Tool = {
         description: "Optional: Output files to bundle. Content can be file path (auto-read) or actual content."
       }
     },
-    required: ["blockId", "previousBlock", "contentHash", "consensusType", "ledger"],
+    required: ["blockId", "contentHash", "consensusType", "ledger"],
   },
 };
 
@@ -123,6 +126,34 @@ Use for:
       }
     },
     required: ["blockId"],
+  },
+};
+
+const GET_LATEST_BLOCK_TOOL: Tool = {
+  name: "yamo_get_latest_block",
+  description: `Retrieves the most recently submitted YAMO block from the blockchain.
+
+Queries BlockSubmitted events to find the block with the highest timestamp,
+then fetches its full details including the contentHash that should be used
+as previousBlock for the next submission.
+
+Returns:
+- blockId: Unique block identifier
+- previousBlock: Content hash of parent block
+- agentAddress: Ethereum address of submitter
+- contentHash: 32-byte hash stored on-chain (use as previousBlock for next submission)
+- timestamp: Block submission timestamp (Unix epoch)
+- consensusType: Consensus mechanism used
+- ledger: Distributed storage reference
+- ipfsCID: IPFS CID if content was anchored
+
+Use for:
+- Automatically getting the chain tip for extending the chain
+- Fetching the contentHash to use as previousBlock in submitBlock
+- Discovering the latest block without knowing its ID`,
+  inputSchema: {
+    type: "object",
+    properties: {},
   },
 };
 
@@ -196,6 +227,8 @@ class YamoMcpServer {
   private server: Server;
   private ipfs: IpfsManager;
   private chain: YamoChainClient;
+  // Cache for chain continuation: latest submitted block's contentHash
+  private latestContentHash: string | null = null;
 
   constructor() {
     this.server = new Server({ name: "yamo", version: pkg.version }, { capabilities: { tools: {} } });
@@ -206,7 +239,7 @@ class YamoMcpServer {
 
   private setupHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [SUBMIT_BLOCK_TOOL, GET_BLOCK_TOOL, AUDIT_BLOCK_TOOL, VERIFY_BLOCK_TOOL],
+      tools: [SUBMIT_BLOCK_TOOL, GET_BLOCK_TOOL, GET_LATEST_BLOCK_TOOL, AUDIT_BLOCK_TOOL, VERIFY_BLOCK_TOOL],
     }));
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -241,7 +274,32 @@ class YamoMcpServer {
 
           // Input validation (Part 3: Security Fixes)
           validateBytes32(contentHash, "contentHash");
-          validateBytes32(previousBlock, "previousBlock");
+
+          // Auto-fetch previousBlock if not provided
+          let resolvedPreviousBlock = previousBlock;
+          if (!resolvedPreviousBlock) {
+            console.error(`[INFO] No previousBlock provided, fetching latest block from chain...`);
+
+            // First, try the cache (most reliable for chain continuation)
+            if (this.latestContentHash) {
+              resolvedPreviousBlock = this.latestContentHash;
+              console.error(`[INFO] Using cached latest block's contentHash: ${resolvedPreviousBlock}`);
+            } else {
+              // Fallback to chain query (for first run or if cache was cleared)
+              const latestBlock = await this.chain.getLatestBlock();
+              if (latestBlock) {
+                resolvedPreviousBlock = latestBlock.contentHash;
+                this.latestContentHash = latestBlock.contentHash; // Update cache
+                console.error(`[INFO] Using latest block's contentHash from chain: ${resolvedPreviousBlock}`);
+              } else {
+                // No blocks exist yet, use genesis
+                resolvedPreviousBlock = "0x0000000000000000000000000000000000000000000000000000000000000000";
+                console.error(`[INFO] No existing blocks found, using genesis`);
+              }
+            }
+          } else {
+            validateBytes32(previousBlock, "previousBlock");
+          }
 
           let ipfsCID = undefined;
           if (content) {
@@ -252,8 +310,12 @@ class YamoMcpServer {
              });
           }
 
-          const tx = await this.chain.submitBlock(blockId, previousBlock, contentHash, consensusType, ledger, ipfsCID);
+          const tx = await this.chain.submitBlock(blockId, resolvedPreviousBlock, contentHash, consensusType, ledger, ipfsCID);
           const receipt = await tx.wait();
+
+          // Update cache with the new block's contentHash for chain continuation
+          this.latestContentHash = contentHash;
+          console.error(`[INFO] Updated latestContentHash cache: ${contentHash}`);
 
           return {
             content: [{ type: "text", text: JSON.stringify({
@@ -264,6 +326,7 @@ class YamoMcpServer {
               gasUsed: receipt.gasUsed.toString(),
               effectiveGasPrice: receipt.effectiveGasPrice?.toString(),
               ipfsCID: ipfsCID || null,
+              previousBlock: resolvedPreviousBlock,
               contractAddress: this.chain.getContractAddress(),
               timestamp: new Date().toISOString()
             }, null, 2) }],
@@ -300,6 +363,38 @@ class YamoMcpServer {
                 consensusType: block.consensusType,
                 ledger: block.ledger,
                 ipfsCID: block.ipfsCID || null
+              }
+            }, null, 2) }],
+          };
+        }
+
+        if (name === "yamo_get_latest_block") {
+          const latestBlock = await this.chain.getLatestBlock();
+
+          if (!latestBlock) {
+            return {
+              content: [{ type: "text", text: JSON.stringify({
+                success: false,
+                error: "No blocks found on-chain",
+                hint: "The chain may be empty. Try submitting a genesis block first."
+              }, null, 2) }],
+              isError: false,
+            };
+          }
+
+          return {
+            content: [{ type: "text", text: JSON.stringify({
+              success: true,
+              block: {
+                blockId: latestBlock.blockId,
+                previousBlock: latestBlock.previousBlock,
+                agentAddress: latestBlock.agentAddress,
+                contentHash: latestBlock.contentHash,
+                timestamp: latestBlock.timestamp,
+                timestampISO: new Date(latestBlock.timestamp * 1000).toISOString(),
+                consensusType: latestBlock.consensusType,
+                ledger: latestBlock.ledger,
+                ipfsCID: latestBlock.ipfsCID || null
               }
             }, null, 2) }],
           };
