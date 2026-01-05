@@ -285,12 +285,12 @@ class YamoMcpServer {
               resolvedPreviousBlock = this.latestContentHash;
               console.error(`[INFO] Using cached latest block's contentHash: ${resolvedPreviousBlock}`);
             } else {
-              // Fallback to chain query (for first run or if cache was cleared)
-              const latestBlock = await this.chain.getLatestBlock();
-              if (latestBlock) {
-                resolvedPreviousBlock = latestBlock.contentHash;
-                this.latestContentHash = latestBlock.contentHash; // Update cache
-                console.error(`[INFO] Using latest block's contentHash from chain: ${resolvedPreviousBlock}`);
+              // Fallback to direct contract state read (reliable)
+              const latestHash = await this.chain.getLatestBlockHash();
+              if (latestHash && latestHash !== "0x0000000000000000000000000000000000000000000000000000000000000000") {
+                resolvedPreviousBlock = latestHash;
+                this.latestContentHash = latestHash; // Update cache
+                console.error(`[INFO] Using latest block's contentHash from contract: ${resolvedPreviousBlock}`);
               } else {
                 // No blocks exist yet, use genesis
                 resolvedPreviousBlock = "0x0000000000000000000000000000000000000000000000000000000000000000";
