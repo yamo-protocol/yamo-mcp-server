@@ -457,6 +457,7 @@ class YamoMcpServer {
       success: true,
       blockId,
       transactionHash: tx.hash,
+      contentHash: contentHash, // Returned for easier chain linking
       blockNumber: receipt.blockNumber,
       gasUsed: receipt.gasUsed.toString(),
       effectiveGasPrice: receipt.effectiveGasPrice?.toString(),
