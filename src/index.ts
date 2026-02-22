@@ -3,6 +3,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
+  CallToolResult,
   ListToolsRequestSchema,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -47,9 +48,15 @@ interface VerifyBlockArgs {
   contentHash: string;
 }
 
-interface ToolResponse {
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
+interface RawBlock {
+  blockId: string;
+  previousBlock: string;
+  agentAddress: string;
+  contentHash: string;
+  timestamp: number;
+  consensusType: string;
+  ledger: string;
+  ipfsCID?: string;
 }
 
 // Constants
@@ -61,6 +68,10 @@ const TOOL_NAMES = {
   GET_LATEST_BLOCK: "yamo_get_latest_block",
   AUDIT_BLOCK: "yamo_audit_block",
   VERIFY_BLOCK: "yamo_verify_block",
+  // Bridge tools (require YAMO_BRIDGE_URL)
+  BRIDGE_LIST_KERNELS: "yamo_bridge_list_kernels",
+  BRIDGE_CLUSTER_STATUS: "yamo_bridge_cluster_status",
+  BRIDGE_INVOKE_SKILL: "yamo_bridge_invoke_skill",
 } as const;
 
 const LOG_PREFIX = {
@@ -73,6 +84,80 @@ const VALIDATION_RULES = {
   BYTES32_PATTERN: /^0x[a-fA-F0-9]{64}$/,
   ETH_ADDRESS_PATTERN: /^0x[a-fA-F0-9]{40}$/,
 } as const;
+
+// ── Bridge HTTP helpers ────────────────────────────────────────────────────
+
+/** HTTP base URL of the yamo-bridge, e.g. http://localhost:4001 */
+const BRIDGE_HTTP_URL = process.env.YAMO_BRIDGE_URL
+  ? process.env.YAMO_BRIDGE_URL.replace(/^ws/, "http").replace(/\/socket\/websocket$/, "")
+  : process.env.YAMO_BRIDGE_HTTP_URL ?? null;
+
+async function bridgeGet(path: string): Promise<unknown> {
+  if (!BRIDGE_HTTP_URL) throw new Error("YAMO_BRIDGE_URL is not configured");
+  const resp = await fetch(`${BRIDGE_HTTP_URL}${path}`);
+  if (!resp.ok) throw new Error(`Bridge ${path} returned ${resp.status}`);
+  return resp.json();
+}
+
+async function bridgeRpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+  if (!BRIDGE_HTTP_URL) throw new Error("YAMO_BRIDGE_URL is not configured");
+  const resp = await fetch(`${BRIDGE_HTTP_URL}/rpc`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
+  });
+  if (!resp.ok) throw new Error(`Bridge /rpc returned ${resp.status}`);
+  const body = await resp.json() as { result?: unknown; error?: { message: string } };
+  if (body.error) throw new Error(`Bridge RPC error: ${body.error.message}`);
+  return body.result;
+}
+
+// ── Bridge tool definitions ────────────────────────────────────────────────
+
+const BRIDGE_LIST_KERNELS_TOOL = {
+  name: TOOL_NAMES.BRIDGE_LIST_KERNELS,
+  description: `List all connected YAMO kernels and their skill capabilities via the bridge.
+
+Returns each kernel's ID, capabilities (available skills), status, and last heartbeat.
+Requires YAMO_BRIDGE_URL environment variable.`,
+  inputSchema: { type: "object", properties: {} },
+} satisfies Tool;
+
+const BRIDGE_CLUSTER_STATUS_TOOL = {
+  name: TOOL_NAMES.BRIDGE_CLUSTER_STATUS,
+  description: `Get YAMO bridge cluster status — Raft leader, members, connected kernel count.
+
+Requires YAMO_BRIDGE_URL environment variable.`,
+  inputSchema: { type: "object", properties: {} },
+} satisfies Tool;
+
+const BRIDGE_INVOKE_SKILL_TOOL = {
+  name: TOOL_NAMES.BRIDGE_INVOKE_SKILL,
+  description: `Invoke a named YAMO skill on any capable kernel via the bridge.
+
+The bridge finds a kernel that advertises the skill, routes the payload to it,
+and returns the result synchronously (HTTP long-poll).
+
+Use yamo_bridge_list_kernels to discover available skills first.
+Requires YAMO_BRIDGE_URL environment variable.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      skill: {
+        type: "string",
+        description: "Name of the skill to invoke (must match a kernel's advertised capability)",
+      },
+      payload: {
+        description: "Payload to pass to the skill handler (string or object)",
+      },
+      timeout_ms: {
+        type: "number",
+        description: "Max wait in milliseconds (default 30000, max 60000)",
+      },
+    },
+    required: ["skill"],
+  },
+} satisfies Tool;
 
 // Validation helpers
 function validateBytes32(value: string, fieldName: string): void {
@@ -315,31 +400,31 @@ class YamoMcpServer {
   // Cache for chain continuation: latest submitted block's contentHash
   private latestContentHash: string | null = null;
 
-  constructor() {
+  constructor(ipfs?: IpfsManager, chain?: YamoChainClient) {
     // Validate environment variables at startup
     validateEnvironment();
 
     this.server = new Server({ name: "yamo", version: pkg.version }, { capabilities: { tools: {} } });
-    this.ipfs = new IpfsManager();
-    this.chain = new YamoChainClient();
+    this.ipfs = ipfs || new IpfsManager();
+    this.chain = chain || new YamoChainClient();
     this.setupHandlers();
   }
 
   // Response formatting helpers
-  private createSuccessResponse(data: any): ToolResponse {
+  private createSuccessResponse(data: unknown): CallToolResult {
     return {
       content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
     };
   }
 
-  private createErrorResponse(error: any, isError: boolean = true): ToolResponse {
+  private createErrorResponse(error: unknown, isError: boolean = true): CallToolResult {
     return {
       content: [{ type: "text", text: JSON.stringify(error, null, 2) }],
       isError,
     };
   }
 
-  private createTextResponse(text: string): ToolResponse {
+  private createTextResponse(text: string): CallToolResult {
     return { content: [{ type: "text", text }] };
   }
 
@@ -356,7 +441,7 @@ class YamoMcpServer {
   }
 
   // Block formatting helper
-  private formatBlockResponse(block: any): any {
+  private formatBlockResponse(block: RawBlock): Record<string, unknown> {
     return {
       blockId: block.blockId,
       previousBlock: block.previousBlock,
@@ -550,24 +635,25 @@ class YamoMcpServer {
         artifactFiles: Object.keys(bundle.files),
         wasEncrypted: !!encryptionKey
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       let errorType = "unknown";
       let hint = "";
+      const errorMessage = error instanceof Error ? error.message : String(error);
 
-      if (error.message.includes("encrypted") && !encryptionKey) {
+      if (errorMessage.includes("encrypted") && !encryptionKey) {
         errorType = "missing_key";
         hint = "This bundle is encrypted. Provide encryptionKey to audit.";
-      } else if (error.message.includes("Decryption failed") || error.message.includes("decrypt")) {
+      } else if (errorMessage.includes("Decryption failed") || errorMessage.includes("decrypt")) {
         errorType = "decryption_failed";
         hint = "The provided encryption key may be incorrect.";
-      } else if (error.message.includes("not found on-chain")) {
+      } else if (errorMessage.includes("not found on-chain")) {
         errorType = "block_not_found";
         hint = "Verify the blockId was submitted correctly.";
       }
 
       return this.createErrorResponse({
         verified: false,
-        error: error.message,
+        error: errorMessage,
         errorType,
         hint,
         blockId
@@ -584,18 +670,67 @@ class YamoMcpServer {
     return this.createTextResponse(isValid ? "VERIFIED" : "FAILED");
   }
 
+  // ── Bridge tool handlers ──────────────────────────────────────────────────
+
+  private async handleBridgeListKernels() {
+    const result = await bridgeRpc("kernel.list", {}) as { kernels: unknown[]; count: number };
+    return this.createSuccessResponse({
+      kernels: result.kernels,
+      count: result.count,
+      bridge: BRIDGE_HTTP_URL,
+    });
+  }
+
+  private async handleBridgeClusterStatus() {
+    const result = await bridgeGet("/cluster/status");
+    return this.createSuccessResponse(result as Record<string, unknown>);
+  }
+
+  private async handleBridgeInvokeSkill(args: unknown) {
+    const { skill, payload, timeout_ms } = args as {
+      skill: string;
+      payload?: unknown;
+      timeout_ms?: number;
+    };
+    if (!skill) throw new Error("skill is required");
+
+    const params: Record<string, unknown> = { skill };
+    if (payload !== undefined) params.payload = payload;
+    if (timeout_ms !== undefined) params.timeout_ms = timeout_ms;
+
+    const result = await bridgeRpc("skill.invoke", params) as {
+      skill: string;
+      handler_id: string;
+      result: unknown;
+    };
+
+    return this.createSuccessResponse({
+      skill: result.skill,
+      handler_id: result.handler_id,
+      result: result.result,
+    });
+  }
+
   // Tool handler registry
-  private toolHandlers: Record<string, (args?: any) => Promise<any>> = {
+  private toolHandlers: Record<string, (args?: unknown) => Promise<CallToolResult>> = {
     [TOOL_NAMES.SUBMIT_BLOCK]: (args) => this.handleSubmitBlock(args as SubmitBlockArgs),
     [TOOL_NAMES.GET_BLOCK]: (args) => this.handleGetBlock(args as GetBlockArgs),
     [TOOL_NAMES.GET_LATEST_BLOCK]: () => this.handleGetLatestBlock(),
     [TOOL_NAMES.AUDIT_BLOCK]: (args) => this.handleAuditBlock(args as AuditBlockArgs),
     [TOOL_NAMES.VERIFY_BLOCK]: (args) => this.handleVerifyBlock(args as VerifyBlockArgs),
+    [TOOL_NAMES.BRIDGE_LIST_KERNELS]: () => this.handleBridgeListKernels(),
+    [TOOL_NAMES.BRIDGE_CLUSTER_STATUS]: () => this.handleBridgeClusterStatus(),
+    [TOOL_NAMES.BRIDGE_INVOKE_SKILL]: (args) => this.handleBridgeInvokeSkill(args),
   };
 
   private setupHandlers() {
+    // Bridge tools are only exposed when YAMO_BRIDGE_URL is configured
+    const bridgeTools = BRIDGE_HTTP_URL
+      ? [BRIDGE_LIST_KERNELS_TOOL, BRIDGE_CLUSTER_STATUS_TOOL, BRIDGE_INVOKE_SKILL_TOOL]
+      : [];
+
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [SUBMIT_BLOCK_TOOL, GET_BLOCK_TOOL, GET_LATEST_BLOCK_TOOL, AUDIT_BLOCK_TOOL, VERIFY_BLOCK_TOOL],
+      tools: [SUBMIT_BLOCK_TOOL, GET_BLOCK_TOOL, GET_LATEST_BLOCK_TOOL, AUDIT_BLOCK_TOOL, VERIFY_BLOCK_TOOL, ...bridgeTools],
     }));
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -607,10 +742,11 @@ class YamoMcpServer {
           throw new Error(`Unknown tool: ${name}`);
         }
         return await handler(args);
-      } catch (error: any) {
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         return this.createErrorResponse({
           success: false,
-          error: error.message,
+          error: errorMessage,
           tool: name,
           timestamp: new Date().toISOString()
         });
