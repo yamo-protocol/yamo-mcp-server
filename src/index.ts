@@ -68,6 +68,8 @@ const TOOL_NAMES = {
   GET_LATEST_BLOCK: "yamo_get_latest_block",
   AUDIT_BLOCK: "yamo_audit_block",
   VERIFY_BLOCK: "yamo_verify_block",
+  // Memory tools (read-only Ghost Protection)
+  RECALL_LESSONS: "yamo_recall_lessons",
   // Bridge tools (require YAMO_BRIDGE_URL)
   BRIDGE_LIST_KERNELS: "yamo_bridge_list_kernels",
   BRIDGE_CLUSTER_STATUS: "yamo_bridge_cluster_status",
@@ -111,6 +113,47 @@ async function bridgeRpc(method: string, params: Record<string, unknown>): Promi
   if (body.error) throw new Error(`Bridge RPC error: ${body.error.message}`);
   return body.result;
 }
+
+// ── Memory tool definitions ────────────────────────────────────────────────
+
+/** Environment variable that sets the path to the YAMO LanceDB directory.
+ * Defaults to the same path yamo-os uses. Read-only — no writes via MCP. */
+const YAMO_MEMORY_PATH = process.env.YAMO_MEMORY_PATH || "./data/memories.lance";
+
+interface RecallLessonsArgs {
+  limit?: number;
+}
+
+/** Minimal interface for the ESM MemoryMesh needed by this server. */
+interface MemoryInterface {
+  search(query: string, opts: { limit: number }): Promise<{ content: string }[]>;
+}
+
+const RECALL_LESSONS_TOOL: Tool = {
+  name: TOOL_NAMES.RECALL_LESSONS,
+  description: `Recall past LessonLearned constraints stored by YAMO agents.
+
+Returns raw YAMO block content strings tagged with #lesson_learned. These are
+constraints and rules discovered in past sessions that the current agent should
+treat as active guidelines.
+
+**Ghost Protection:** Call this at the start of each session to restore
+institutional memory and avoid repeating past mistakes.
+
+Read-only — never modifies the memory store.
+Requires YAMO_MEMORY_PATH or defaults to ./data/memories.lance.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      limit: {
+        type: "number",
+        description: "Maximum number of lessons to return (default: 5)",
+        minimum: 1,
+        maximum: 20,
+      },
+    },
+  },
+};
 
 // ── Bridge tool definitions ────────────────────────────────────────────────
 
@@ -399,6 +442,8 @@ class YamoMcpServer {
   private chain: YamoChainClient;
   // Cache for chain continuation: latest submitted block's contentHash
   private latestContentHash: string | null = null;
+  // Lazy-initialized read-only MemoryMesh (ESM loaded via dynamic import)
+  private memory: unknown = null;
 
   constructor(ipfs?: IpfsManager, chain?: YamoChainClient) {
     // Validate environment variables at startup
@@ -711,6 +756,47 @@ class YamoMcpServer {
     });
   }
 
+  // ── Memory tool handlers ──────────────────────────────────────────────────
+
+  /** Lazy-init MemoryMesh in read-only mode (no add() calls).
+   * Uses dynamic import() because @yamo/memory-mesh is ESM. */
+  private async getMemory(): Promise<MemoryInterface> {
+    if (!this.memory) {
+      const mod = await import("@yamo/memory-mesh") as { MemoryMesh: new (opts?: { path?: string }) => MemoryInterface };
+      const mesh: MemoryInterface = new mod.MemoryMesh({ path: YAMO_MEMORY_PATH });
+      this.memory = mesh;
+    }
+    return this.memory as MemoryInterface;
+  }
+
+  private async handleRecallLessons(args?: RecallLessonsArgs): Promise<CallToolResult> {
+    const limit = Math.min(Math.max(args?.limit ?? 5, 1), 20);
+    try {
+      const mesh = await this.getMemory();
+      const results = await mesh.search(
+        "LessonLearned constraint preventative rule #lesson_learned",
+        { limit },
+      );
+      // Return raw content strings — NEVER parse YAMO block fields here.
+      // The calling LLM interprets the content; the machine only retrieves it.
+      const lessons = results
+        .map((r) => r.content as string)
+        .filter((c) => Boolean(c && c.trim()));
+
+      if (lessons.length === 0) {
+        return this.createTextResponse("No lessons found. Memory may be empty or not yet initialized.");
+      }
+
+      // Join with double newline — raw YAMO blocks, no wrapping, no JSON.
+      return this.createTextResponse(lessons.join("\n\n"));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Memory unavailable is non-fatal — return empty rather than error
+      this.log("ERROR", `recall_lessons: ${msg}`);
+      return this.createTextResponse(`Memory unavailable: ${msg}`);
+    }
+  }
+
   // Tool handler registry
   private toolHandlers: Record<string, (args?: unknown) => Promise<CallToolResult>> = {
     [TOOL_NAMES.SUBMIT_BLOCK]: (args) => this.handleSubmitBlock(args as SubmitBlockArgs),
@@ -718,6 +804,7 @@ class YamoMcpServer {
     [TOOL_NAMES.GET_LATEST_BLOCK]: () => this.handleGetLatestBlock(),
     [TOOL_NAMES.AUDIT_BLOCK]: (args) => this.handleAuditBlock(args as AuditBlockArgs),
     [TOOL_NAMES.VERIFY_BLOCK]: (args) => this.handleVerifyBlock(args as VerifyBlockArgs),
+    [TOOL_NAMES.RECALL_LESSONS]: (args) => this.handleRecallLessons(args as RecallLessonsArgs),
     [TOOL_NAMES.BRIDGE_LIST_KERNELS]: () => this.handleBridgeListKernels(),
     [TOOL_NAMES.BRIDGE_CLUSTER_STATUS]: () => this.handleBridgeClusterStatus(),
     [TOOL_NAMES.BRIDGE_INVOKE_SKILL]: (args) => this.handleBridgeInvokeSkill(args),
@@ -730,7 +817,7 @@ class YamoMcpServer {
       : [];
 
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [SUBMIT_BLOCK_TOOL, GET_BLOCK_TOOL, GET_LATEST_BLOCK_TOOL, AUDIT_BLOCK_TOOL, VERIFY_BLOCK_TOOL, ...bridgeTools],
+      tools: [SUBMIT_BLOCK_TOOL, GET_BLOCK_TOOL, GET_LATEST_BLOCK_TOOL, AUDIT_BLOCK_TOOL, VERIFY_BLOCK_TOOL, RECALL_LESSONS_TOOL, ...bridgeTools],
     }));
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {

@@ -14,6 +14,19 @@ npx @yamo/mcp-server
 
 ## 🧰 Tools Provided
 
+### `yamo_recall_lessons`
+Recalls past `LessonLearned` constraints stored by YAMO agents — **Ghost Protection**.
+
+Call this at the start of each session to restore institutional memory and avoid repeating past mistakes. Returns raw YAMO block content strings; the calling LLM interprets and applies them as active constraints.
+
+*   **Input**: `limit` (optional, default: 5, max: 20)
+*   **Output**: Raw YAMO block strings joined with double newline
+*   **Env**: `YAMO_MEMORY_PATH` — path to LanceDB directory (default: `./data/memories.lance`)
+
+> **Architectural note:** This server accesses memory in **read-only mode**. If a future
+> requirement needs MCP sessions to store lessons, route writes through yamo-bridge via
+> `memory:shared` — do not open the LanceDB store for direct writes from MCP.
+
 ### `yamo_submit_block`
 Submits a new reasoning block.
 *   **Input**: `blockId`, `contentHash`, etc.
