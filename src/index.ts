@@ -126,7 +126,8 @@ interface RecallLessonsArgs {
 
 /** Minimal interface for the ESM MemoryMesh needed by this server. */
 interface MemoryInterface {
-  search(query: string, opts: { limit: number }): Promise<{ content: string }[]>;
+  init(): Promise<void>;
+  queryLessons(query?: string, opts?: { limit?: number }): Promise<{ wireFormat: string }[]>;
 }
 
 const RECALL_LESSONS_TOOL: Tool = {
@@ -762,8 +763,8 @@ class YamoMcpServer {
    * Uses dynamic import() because @yamo/memory-mesh is ESM. */
   private async getMemory(): Promise<MemoryInterface> {
     if (!this.memory) {
-      const mod = await import("@yamo/memory-mesh") as { MemoryMesh: new (opts?: { path?: string }) => MemoryInterface };
-      const mesh: MemoryInterface = new mod.MemoryMesh({ path: YAMO_MEMORY_PATH });
+      const mod = await import("@yamo/memory-mesh") as { MemoryMesh: new (opts?: { dbDir?: string }) => MemoryInterface };
+      const mesh: MemoryInterface = new mod.MemoryMesh({ dbDir: YAMO_MEMORY_PATH });
       this.memory = mesh;
     }
     return this.memory as MemoryInterface;
@@ -773,14 +774,12 @@ class YamoMcpServer {
     const limit = Math.min(Math.max(args?.limit ?? 5, 1), 20);
     try {
       const mesh = await this.getMemory();
-      const results = await mesh.search(
-        "LessonLearned constraint preventative rule #lesson_learned",
-        { limit },
-      );
-      // Return raw content strings — NEVER parse YAMO block fields here.
+      await mesh.init();
+      const results = await mesh.queryLessons(undefined, { limit });
+      // Return raw wireFormat YAMO block strings — NEVER parse here.
       // The calling LLM interprets the content; the machine only retrieves it.
       const lessons = results
-        .map((r) => r.content as string)
+        .map((r) => r.wireFormat)
         .filter((c) => Boolean(c && c.trim()));
 
       if (lessons.length === 0) {
