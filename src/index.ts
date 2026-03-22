@@ -13,17 +13,21 @@ import fs from "fs";
 import crypto from "crypto";
 import path from "path";
 
+// In CommonJS, __dirname is already available. 
+// However, we are in a TypeScript file that might be compiled to ESM or CJS.
+// Given the error, we are building to CommonJS.
+
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
 
 dotenv.config();
 
 // TypeScript interfaces for tool arguments and responses
-interface FileInput {
+export interface FileInput {
   name: string;
   content: string;
 }
 
-interface SubmitBlockArgs {
+export interface SubmitBlockArgs {
   blockId: string;
   previousBlock?: string;
   contentHash: string;
@@ -34,21 +38,21 @@ interface SubmitBlockArgs {
   encryptionKey?: string;
 }
 
-interface GetBlockArgs {
+export interface GetBlockArgs {
   blockId: string;
 }
 
-interface AuditBlockArgs {
+export interface AuditBlockArgs {
   blockId: string;
   encryptionKey?: string;
 }
 
-interface VerifyBlockArgs {
+export interface VerifyBlockArgs {
   blockId: string;
   contentHash: string;
 }
 
-interface RawBlock {
+export interface RawBlock {
   blockId: string;
   previousBlock: string;
   agentAddress: string;
@@ -60,9 +64,9 @@ interface RawBlock {
 }
 
 // Constants
-const GENESIS_HASH = "0x0000000000000000000000000000000000000000000000000000000000000000";
+export const GENESIS_HASH = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
-const TOOL_NAMES = {
+export const TOOL_NAMES = {
   SUBMIT_BLOCK: "yamo_submit_block",
   GET_BLOCK: "yamo_get_block",
   GET_LATEST_BLOCK: "yamo_get_latest_block",
@@ -70,6 +74,8 @@ const TOOL_NAMES = {
   VERIFY_BLOCK: "yamo_verify_block",
   // Memory tools (read-only Ghost Protection)
   RECALL_LESSONS: "yamo_recall_lessons",
+  // Provenance anchoring (Phase 3)
+  ANCHOR_EVENT: "yamo_anchor_event",
   // Bridge tools (require YAMO_BRIDGE_URL)
   BRIDGE_LIST_KERNELS: "yamo_bridge_list_kernels",
   BRIDGE_CLUSTER_STATUS: "yamo_bridge_cluster_status",
@@ -120,8 +126,15 @@ async function bridgeRpc(method: string, params: Record<string, unknown>): Promi
  * Defaults to the same path yamo-os uses. Read-only — no writes via MCP. */
 const YAMO_MEMORY_PATH = process.env.YAMO_MEMORY_PATH || "./data/memories.lance";
 
-interface RecallLessonsArgs {
+export interface RecallLessonsArgs {
   limit?: number;
+}
+
+export interface AnchorEventArgs {
+  blockId: string;
+  contentHash: string;
+  consensus?: string;
+  ledger?: string;
 }
 
 /** Minimal interface for the ESM MemoryMesh needed by this server. */
@@ -153,6 +166,42 @@ Requires YAMO_MEMORY_PATH or defaults to ./data/memories.lance.`,
         maximum: 20,
       },
     },
+  },
+};
+
+const ANCHOR_EVENT_TOOL: Tool = {
+  name: TOOL_NAMES.ANCHOR_EVENT,
+  description: `Anchor a YAMO provenance event on-chain (Phase 3 — Provenance Closure).
+
+Submits a blockId + contentHash pair to the YAMORegistry smart contract.
+Use this to create an immutable on-chain record of a YAMO event (skill synthesis,
+wisdom distillation, session milestone, etc.).
+
+contentHash must be a bytes32 hex string (0x + 64 hex chars).
+blockId must follow the YAMO naming convention: {origin}_{workflow}.
+
+Fire-and-forget from the LLM's perspective — returns a success or error string.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      blockId: {
+        type: "string",
+        description: "YAMO block ID: {origin}_{workflow} (e.g., 'kernel_lesson', 'agent_synthesis')",
+      },
+      contentHash: {
+        type: "string",
+        description: "SHA-256 hash of the YAMO block content: 0x + 64 hex chars",
+      },
+      consensus: {
+        type: "string",
+        description: "Optional: Consensus mechanism (default: 'mcp_anchor')",
+      },
+      ledger: {
+        type: "string",
+        description: "Optional: Ledger name (default: 'ipfs_none')",
+      },
+    },
+    required: ["blockId", "contentHash"],
   },
 };
 
@@ -204,23 +253,23 @@ Requires YAMO_BRIDGE_URL environment variable.`,
 } satisfies Tool;
 
 // Validation helpers
-function validateBytes32(value: string, fieldName: string): void {
+export function validateBytes32(value: string, fieldName: string): void {
   if (!value.match(VALIDATION_RULES.BYTES32_PATTERN)) {
     throw new Error(
       `${fieldName} must be a valid bytes32 hash (0x + 64 hex chars). ` +
-      `Received: ${value.substring(0, 20)}...` +
-      `\nDo NOT include algorithm prefixes like "sha256:"`
+      `Received: ${value.substring(0, 20)}...
+Do NOT include algorithm prefixes like "sha256:"`
     );
   }
 }
 
-function validateEthereumAddress(address: string, fieldName: string): void {
+export function validateEthereumAddress(address: string, fieldName: string): void {
   if (!address || !address.match(VALIDATION_RULES.ETH_ADDRESS_PATTERN)) {
     throw new Error(`${fieldName} must be a valid Ethereum address (0x + 40 hex characters)`);
   }
 }
 
-function validateBlockId(blockId: string): void {
+export function validateBlockId(blockId: string): void {
   if (!blockId) throw new Error("blockId is required");
   
   const parts = blockId.split('_');
@@ -229,7 +278,7 @@ function validateBlockId(blockId: string): void {
   }
 }
 
-function validateEnvironment(): void {
+export function validateEnvironment(): void {
   const requiredEnvVars = ['CONTRACT_ADDRESS', 'RPC_URL', 'PRIVATE_KEY'];
   const missing = requiredEnvVars.filter(v => !process.env[v]);
   if (missing.length > 0) {
@@ -437,22 +486,18 @@ Returns:
   },
 };
 
-class YamoMcpServer {
+export class YamoMcpServer {
   private server: Server;
-  private ipfs: IpfsManager;
-  private chain: YamoChainClient;
   // Cache for chain continuation: latest submitted block's contentHash
   private latestContentHash: string | null = null;
   // Lazy-initialized read-only MemoryMesh (ESM loaded via dynamic import)
   private memory: unknown = null;
 
-  constructor(ipfs?: IpfsManager, chain?: YamoChainClient) {
+  constructor() {
     // Validate environment variables at startup
     validateEnvironment();
 
     this.server = new Server({ name: "yamo", version: pkg.version }, { capabilities: { tools: {} } });
-    this.ipfs = ipfs || new IpfsManager();
-    this.chain = chain || new YamoChainClient();
     this.setupHandlers();
   }
 
@@ -527,8 +572,17 @@ class YamoMcpServer {
     return file;
   }
 
+  // On-demand client instantiation
+  private getChainClient(): YamoChainClient {
+    return new YamoChainClient();
+  }
+
+  private getIpfsClient(): IpfsManager {
+    return new IpfsManager();
+  }
+
   // Previous block resolution helper
-  private async resolvePreviousBlock(previousBlock?: string): Promise<string> {
+  private async resolvePreviousBlock(chain: YamoChainClient, previousBlock?: string): Promise<string> {
     if (previousBlock) return previousBlock;
 
     this.log('INFO', 'No previousBlock provided, fetching latest block from chain...');
@@ -538,7 +592,7 @@ class YamoMcpServer {
       return this.latestContentHash;
     }
 
-    const latestHash = await this.chain.getLatestBlockHash();
+    const latestHash = await chain.getLatestBlockHash();
     if (latestHash && latestHash !== GENESIS_HASH) {
       this.latestContentHash = latestHash;
       this.log('INFO', `Using latest block's contentHash from contract: ${latestHash}`);
@@ -564,13 +618,16 @@ class YamoMcpServer {
       ? await Promise.all(files.map(f => this.processSingleFile(f)))
       : files;
 
+    const chain = this.getChainClient();
+    const ipfs = this.getIpfsClient();
+
     // Resolve previous block hash
-    const resolvedPreviousBlock = await this.resolvePreviousBlock(previousBlock);
+    const resolvedPreviousBlock = await this.resolvePreviousBlock(chain, previousBlock);
 
     // Upload to IPFS if content provided
     let ipfsCID = undefined;
     if (content) {
-      ipfsCID = await this.ipfs.upload({
+      ipfsCID = await ipfs.upload({
         content,
         files: processedFiles,
         encryptionKey
@@ -578,7 +635,7 @@ class YamoMcpServer {
     }
 
     // Submit to blockchain
-    const tx = await this.chain.submitBlock(blockId, resolvedPreviousBlock, contentHash, consensusType, ledger, ipfsCID);
+    const tx = await chain.submitBlock(blockId, resolvedPreviousBlock, contentHash, consensusType, ledger, ipfsCID);
     const receipt = await tx.wait();
 
     // Update cache
@@ -594,14 +651,15 @@ class YamoMcpServer {
       effectiveGasPrice: receipt.effectiveGasPrice?.toString(),
       ipfsCID: ipfsCID || null,
       previousBlock: resolvedPreviousBlock,
-      contractAddress: this.chain.getContractAddress(),
+      contractAddress: chain.getContractAddress(),
       timestamp: new Date().toISOString()
     });
   }
 
   private async handleGetBlock(args: GetBlockArgs) {
     const { blockId } = args;
-    const block = await this.chain.getBlock(blockId);
+    const chain = this.getChainClient();
+    const block = await chain.getBlock(blockId);
 
     if (!block) {
       return this.createErrorResponse({
@@ -619,7 +677,8 @@ class YamoMcpServer {
   }
 
   private async handleGetLatestBlock() {
-    const latestBlock = await this.chain.getLatestBlock();
+    const chain = this.getChainClient();
+    const latestBlock = await chain.getLatestBlock();
 
     if (!latestBlock) {
       return this.createErrorResponse({
@@ -637,8 +696,10 @@ class YamoMcpServer {
 
   private async handleAuditBlock(args: AuditBlockArgs) {
     const { blockId, encryptionKey } = args;
+    const chain = this.getChainClient();
+    const ipfs = this.getIpfsClient();
 
-    const block = await this.chain.getBlock(blockId);
+    const block = await chain.getBlock(blockId);
     if (!block) {
       return this.createErrorResponse({
         verified: false,
@@ -661,7 +722,7 @@ class YamoMcpServer {
     }
 
     try {
-      const bundle = await this.ipfs.downloadBundle(block.ipfsCID, encryptionKey);
+      const bundle = await ipfs.downloadBundle(block.ipfsCID, encryptionKey);
       const computedHash = "0x" + crypto.createHash("sha256").update(bundle.block).digest("hex");
       const verified = computedHash === block.contentHash;
 
@@ -709,7 +770,8 @@ class YamoMcpServer {
 
   private async handleVerifyBlock(args: VerifyBlockArgs) {
     const { blockId, contentHash } = args;
-    const contract = this.chain.getContract(false);
+    const chain = this.getChainClient();
+    const contract = chain.getContract(false);
     const hashBytes = contentHash.startsWith("0x") ? contentHash : `0x${contentHash}`;
     const isValid = await contract.verifyBlock(blockId, hashBytes);
 
@@ -757,6 +819,28 @@ class YamoMcpServer {
     });
   }
 
+  // ── Provenance anchor handler ─────────────────────────────────────────────
+
+  private async handleAnchorEvent(args: AnchorEventArgs): Promise<CallToolResult> {
+    const { blockId, contentHash, consensus, ledger } = args;
+    validateBlockId(blockId);
+    validateBytes32(contentHash, "contentHash");
+
+    const chain = this.getChainClient();
+    const contract = chain.getContract(true);
+    await contract.submitBlockV2(
+        blockId, 
+        "0x0000000000000000000000000000000000000000000000000000000000000000", 
+        contentHash, 
+        consensus || "mcp_anchor", 
+        ledger || "ipfs_none",
+        ""
+    );
+    return this.createTextResponse(
+      `Anchored: blockId=${blockId} contentHash=${contentHash}`
+    );
+  }
+
   // ── Memory tool handlers ──────────────────────────────────────────────────
 
   /** Lazy-init MemoryMesh in read-only mode (no add() calls).
@@ -797,13 +881,14 @@ class YamoMcpServer {
   }
 
   // Tool handler registry
-  private toolHandlers: Record<string, (args?: unknown) => Promise<CallToolResult>> = {
+  public toolHandlers: Record<string, (args?: unknown) => Promise<CallToolResult>> = {
     [TOOL_NAMES.SUBMIT_BLOCK]: (args) => this.handleSubmitBlock(args as SubmitBlockArgs),
     [TOOL_NAMES.GET_BLOCK]: (args) => this.handleGetBlock(args as GetBlockArgs),
     [TOOL_NAMES.GET_LATEST_BLOCK]: () => this.handleGetLatestBlock(),
     [TOOL_NAMES.AUDIT_BLOCK]: (args) => this.handleAuditBlock(args as AuditBlockArgs),
     [TOOL_NAMES.VERIFY_BLOCK]: (args) => this.handleVerifyBlock(args as VerifyBlockArgs),
     [TOOL_NAMES.RECALL_LESSONS]: (args) => this.handleRecallLessons(args as RecallLessonsArgs),
+    [TOOL_NAMES.ANCHOR_EVENT]: (args) => this.handleAnchorEvent(args as AnchorEventArgs),
     [TOOL_NAMES.BRIDGE_LIST_KERNELS]: () => this.handleBridgeListKernels(),
     [TOOL_NAMES.BRIDGE_CLUSTER_STATUS]: () => this.handleBridgeClusterStatus(),
     [TOOL_NAMES.BRIDGE_INVOKE_SKILL]: (args) => this.handleBridgeInvokeSkill(args),
@@ -816,7 +901,7 @@ class YamoMcpServer {
       : [];
 
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [SUBMIT_BLOCK_TOOL, GET_BLOCK_TOOL, GET_LATEST_BLOCK_TOOL, AUDIT_BLOCK_TOOL, VERIFY_BLOCK_TOOL, RECALL_LESSONS_TOOL, ...bridgeTools],
+      tools: [SUBMIT_BLOCK_TOOL, GET_BLOCK_TOOL, GET_LATEST_BLOCK_TOOL, AUDIT_BLOCK_TOOL, VERIFY_BLOCK_TOOL, RECALL_LESSONS_TOOL, ANCHOR_EVENT_TOOL, ...bridgeTools],
     }));
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -847,5 +932,8 @@ class YamoMcpServer {
   }
 }
 
-const server = new YamoMcpServer();
-server.run().catch(console.error);
+// Only run if this is the main module
+if (require.main === module) {
+  const server = new YamoMcpServer();
+  server.run().catch(console.error);
+}

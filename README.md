@@ -33,8 +33,32 @@ Submits a new reasoning block.
 *   **New Feature**: `content` (string) and `files` (array). If provided, the server handles IPFS uploading and Deep Bundling automatically before signing.
 *   **Encryption**: Optional `encryptionKey` (string). If provided, the bundle is encrypted (AES-256-GCM) before upload, ensuring privacy for sensitive reasoning chains.
 
+### `yamo_get_block`
+Retrieves full block data from the YAMO blockchain by its unique ID.
+Returns metadata including `blockId`, `previousBlock`, `agentAddress`, `contentHash`, `timestamp`, `consensusType`, `ledger`, and `ipfsCID`.
+
+### `yamo_get_latest_block`
+Retrieves the most recently submitted YAMO block from the blockchain. Useful for automatically getting the chain tip to use as `previousBlock` for the next submission.
+
+### `yamo_audit_block`
+Performs a cryptographic integrity audit of a block.
+1.  Fetches block metadata from blockchain.
+2.  Downloads content from IPFS.
+3.  Re-hashes the content locally.
+4.  Asserts `LocalHash === ChainHash`.
+Requires `encryptionKey` if the bundle is encrypted.
+
 ### `yamo_verify_block`
-Verifies if a specific hash matches the immutable record.
+Quickly verifies if a specific hash matches the immutable on-chain record for a block ID.
+
+### `yamo_anchor_event`
+Anchors a YAMO provenance event on-chain (Phase 3). Submits a `blockId` and `contentHash` pair to the registry without IPFS content.
+
+### `yamo_bridge_*`
+Tools for interacting with the YAMO bridge cluster (requires `YAMO_BRIDGE_URL`):
+- `yamo_bridge_list_kernels`: Lists connected kernels and their skills.
+- `yamo_bridge_cluster_status`: Shows bridge cluster status (Raft leader, members).
+- `yamo_bridge_invoke_skill`: Invokes a skill on a capable kernel.
 
 ## ⚙️ Configuration
 
